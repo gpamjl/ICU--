@@ -1,0 +1,18 @@
+{
+  "name": "ICU-AW 日次入力・主要指標ビューア",
+  "short_name": "ICU-AW",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f7fb",
+  "theme_color": "#0f766e",
+  "description": "ICU-AW 日次入力と主要指標グラフを端末ごとに保存して使用するアプリ",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
