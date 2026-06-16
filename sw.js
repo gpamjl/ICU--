@@ -1,4 +1,4 @@
-const CACHE_NAME = 'icu-aw-app-v17';
+const CACHE_NAME = 'icu-aw-app-v21';
 const APP_ASSETS = [
   './',
   './index.html',
