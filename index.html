@@ -246,8 +246,10 @@ canvas { width:100%; height:310px; display:block; }
 const DATA = JSON.parse(document.getElementById('excel-data').textContent);
 const DAYS = Array.from({length:14}, (_,i)=>i+1);
 const letters = 'DEFGHIJKLMNOPQ'.split('');
+const REQUIRED_RATE_ROW = 7601;
 const formulaRows = new Set(DATA.formulaRows);
 formulaRows.add(7);
+formulaRows.add(REQUIRED_RATE_ROW);
 const graphMap = Object.fromEntries(Object.entries(DATA.graphMap).map(([k,v])=>[Number(k),Number(v)]));
 const STORAGE_KEY = 'icuAwDailyStateV3';
 const CASE_ID_KEY = 'icuAwCaseIdV1';
@@ -263,6 +265,8 @@ const CUSTOM_DAILY_ROWS = [
 ];
 const OPTIONAL_MEASURE_ROWS = [47,41];
 const OPTIONAL_MEASURE_VALUES = ['測定なし','評価対象外'];
+const UNMEASURED_ROWS = [56,57];
+const UNMEASURED_VALUE = '未測定';
 let selectedDay = 0;
 let caseId = localStorage.getItem(CASE_ID_KEY) || '';
 let values = loadState(caseId);
@@ -319,8 +323,9 @@ function n(v) { return isBlank(v) ? 0 : Number(v); }
 function fmt(v) { if (isBlank(v)) return ''; if (typeof v==='string') return v; if (!Number.isFinite(v)) return ''; if (Math.abs(v) >= 100) return String(Math.round(v*10)/10); if (Math.abs(v) >= 10) return String(Math.round(v*10)/10); return String(Math.round(v*100)/100); }
 function displayValue(row,d) { return row===51 ? num(51,d) : (formulaRows.has(row) ? val(row,d) : raw(row,d)); }
 function requiredItemName(row) { return rowMeta(row).item || `行${row}`; }
-function isRequiredSatisfied(row,d) { if (row===51) return num(51,d)!==''; const v=raw(row,d); return !isBlank(v) || (OPTIONAL_MEASURE_ROWS.includes(row) && isOptionalMeasureValue(v)); }
-function optionalMeasureText(d) { const rows=OPTIONAL_MEASURE_ROWS.filter(r=>isOptionalMeasureValue(raw(r,d))).map(r=>`${requiredItemName(r)}: ${raw(r,d)}`); return rows.length ? rows.join('、') : 'なし'; }
+function isUnmeasuredValue(row,d) { return UNMEASURED_ROWS.includes(row) && raw(row,d)===UNMEASURED_VALUE; }
+function isRequiredSatisfied(row,d) { if (row===51) return num(51,d)!==''; const v=raw(row,d); return !isBlank(v) || (OPTIONAL_MEASURE_ROWS.includes(row) && isOptionalMeasureValue(v)) || isUnmeasuredValue(row,d); }
+function optionalMeasureText(d) { const rows=[...OPTIONAL_MEASURE_ROWS.filter(r=>isOptionalMeasureValue(raw(r,d))).map(r=>`${requiredItemName(r)}: ${raw(r,d)}`), ...UNMEASURED_ROWS.filter(r=>isUnmeasuredValue(r,d)).map(r=>`${requiredItemName(r)}: ${UNMEASURED_VALUE}`)]; return rows.length ? rows.join('、') : 'なし'; }
 function requiredMissingRows(d) { return REQUIRED_ROWS.filter(r=>!isRequiredSatisfied(r,d)); }
 function requiredInputCount(d) { return REQUIRED_ROWS.length - requiredMissingRows(d).length; }
 function requiredInputRate(d) { return REQUIRED_ROWS.length ? requiredInputCount(d) / REQUIRED_ROWS.length : 1; }
@@ -354,6 +359,7 @@ function val(r,d) {
   if (r===71) return isSafetyIncomplete(d) ? safetyMessage(d) : (val(70,d)==='Red' ? '体位管理・ROM中心／負荷増量しない' : (val(70,d)==='Yellow' ? '低〜中負荷・短時間・反応確認' : '段階的増量'));
   if (r===74) return redReasons(d);
   if (r===75) return riskReasons(d);
+  if (r===REQUIRED_RATE_ROW) return requiredInputRateText(d);
   return '';
 }
 function micro(d) { return (ge(47,d,2)?1:0)+(lt(54,d,0.5)?1:0)+(gt(55,d,3)?1:0)+(lt(51,d,65)?1:0)+(lt(49,d,300)?1:0)+(raw(53,d)==='増量'?1:0)+(raw(56,d)==='有'?1:0)+(raw(57,d)==='有'?1:0); }
@@ -370,7 +376,8 @@ function formulaFor(row, day) { const item = DATA.dailyRows.find(r=>r.r===row); 
 function isTextRow(r) { return [8,23,41,47,51,53,56,57,60,61,72,73].includes(r); }
 function dropdownOptions(r) {
  if (r===8) return ['','0: 入室直後','1: 24-72h','2: 3-7日','3: 7日以降','4: 退室前後'];
- if (r===23 || r===56 || r===57) return ['','無','有'];
+ if (r===23) return ['','無','有'];
+ if (r===56 || r===57) return ['','無','有','未測定'];
  if (r===53) return ['','なし','減量','不変','増量'];
  if (r===72) return ['','I 関節可動域訓練','II 体位ドレナージ','III ギャッチアップ30°','IV ギャッチアップ60°','V 端坐位','VI 立位・足踏み','VII 歩行'];
   if (r===73) return ['','Passive','Active-assistive','Active','Resistance'];
@@ -400,6 +407,8 @@ function renderDaily() {
   visibleRows.unshift(...DATA.dailyRows.filter(r=>[6,5].includes(r.r)).sort((a,b)=>a.r===6?-1:b.r===6?1:0));
   const mapIndex=visibleRows.findIndex(r=>r.r===51);
   if (mapIndex>=0) visibleRows.splice(mapIndex,0,...CUSTOM_DAILY_ROWS);
+  const autoIndex=visibleRows.findIndex(r=>r.r===62);
+  if (autoIndex>=0) visibleRows.splice(autoIndex,0,{r:REQUIRED_RATE_ROW});
   visibleRows.push(...DATA.dailyRows.filter(r=>[72,73].includes(r.r)));
  for (const row of visibleRows) {
    const meta=rowMeta(row.r);
@@ -454,7 +463,7 @@ function dailySafetySummary() {
    必須項目の入力率：${escapeHtml(requiredInputRateText(selectedDay))} ／ 判定ステータス：${escapeHtml(val(70,selectedDay))}
    ${message ? `<small>${escapeHtml(message)}</small>` : ''}
    <small>未入力の重要項目：${escapeHtml(missing)}</small>
-   <small>測定なし/評価対象外：${escapeHtml(optionalMeasureText(selectedDay))}</small>
+   <small>測定なし/評価対象外/未測定：${escapeHtml(optionalMeasureText(selectedDay))}</small>
  </div>`;
 }
 function renderGraph() {
@@ -478,11 +487,12 @@ function renderGraph() {
 }
 function renderKpis() {
   const latest = latestDay(); const k=document.getElementById('kpis');
-  const cards=[['最新入力Day', latest>=0?`Day${latest+1}`:'未入力'], ['必須入力率', latest>=0?requiredInputRateText(latest):'-'], ['総合判定', latest>=0?val(70,latest):''], ['総合点', latest>=0?fmt(val(69,latest)):''], ['Red flag数', latest>=0?fmt(val(68,latest)):''], ['未入力の重要項目', latest>=0?missingRequiredText(latest):'-'], ['測定なし/評価対象外', latest>=0?optionalMeasureText(latest):'-']];
+  const cards=[['最新入力Day', latest>=0?`Day${latest+1}`:'未入力'], ['必須入力率', latest>=0?requiredInputRateText(latest):'-'], ['総合判定', latest>=0?val(70,latest):''], ['総合点', latest>=0?fmt(val(69,latest)):''], ['Red flag数', latest>=0?fmt(val(68,latest)):''], ['未入力の重要項目', latest>=0?missingRequiredText(latest):'-'], ['測定なし/評価対象外/未測定', latest>=0?optionalMeasureText(latest):'-']];
   k.innerHTML=cards.map(([a,b])=>`<div class="kpi"><div class="label">${a}</div><div class="value">${escapeHtml(b)}</div></div>`).join('');
 }
 function rowMeta(row) {
  if (row===SBP_ROW || row===DBP_ROW) return CUSTOM_DAILY_ROWS.find(r=>r.r===row);
+ if (row===REQUIRED_RATE_ROW) return {category:'自動判定', item:'必須入力率', standard:'必須項目の入力数/全必須項目'};
  if (row===6) return {category:'基本', item:'身長 cm', standard:'実測/推定'};
  if (row===7) return {category:'基本', item:'BMI', standard:'体重kg÷身長m²（自動計算）'};
  if (row===51) return {category:'循環', item:'MAP mmHg', standard:'直接入力、または収縮期/拡張期から自動計算'};
@@ -512,7 +522,7 @@ function exportCsv() {
   rows.push(['', '', '安全判定', '判定ステータス', '', ...DAYS.map((_,d)=>val(70,d))]);
   rows.push(['', '', '安全判定', '安全判定メッセージ', '', ...DAYS.map((_,d)=>safetyMessage(d))]);
   rows.push(['', '', '安全判定', '未入力の重要項目', '', ...DAYS.map((_,d)=>missingRequiredText(d))]);
-  rows.push(['', '', '安全判定', '測定なし/評価対象外', '', ...DAYS.map((_,d)=>optionalMeasureText(d))]);
+  rows.push(['', '', '安全判定', '測定なし/評価対象外/未測定', '', ...DAYS.map((_,d)=>optionalMeasureText(d))]);
   const exportRows=DATA.dailyRows.filter(r=>r.r>=5 && r.r<=75 && !isDayHeaderRow(r.r));
   const exportMapIndex=exportRows.findIndex(r=>r.r===51);
   if (exportMapIndex>=0) exportRows.splice(exportMapIndex,0,...CUSTOM_DAILY_ROWS);
@@ -555,10 +565,10 @@ function renderDayReport(dayIndex) {
   <h1>ICU-AW 日次評価レポート</h1>
   <div class="subtitle">日次入力から作成：Day${day}</div>
   <div class="report-case"><strong>症例ID</strong>${escapeHtml(caseId || '未入力')}<br><small>カルテIDやイニシャルは記入しないでください。</small></div>
-  ${(safetyMessage(dayIndex) || optionalMeasureText(dayIndex)!=='なし') ? `<div class="safety-warning">${escapeHtml(safetyMessage(dayIndex) || '安全判定に必要な項目は入力済みです')}<small>未入力の重要項目：${escapeHtml(missingRequiredText(dayIndex))}</small><small>測定なし/評価対象外：${escapeHtml(optionalMeasureText(dayIndex))}</small></div>` : ''}
+  ${(safetyMessage(dayIndex) || optionalMeasureText(dayIndex)!=='なし') ? `<div class="safety-warning">${escapeHtml(safetyMessage(dayIndex) || '安全判定に必要な項目は入力済みです')}<small>未入力の重要項目：${escapeHtml(missingRequiredText(dayIndex))}</small><small>測定なし/評価対象外/未測定：${escapeHtml(optionalMeasureText(dayIndex))}</small></div>` : ''}
   <div class="report-kpis">${kpis.map(([a,b])=>`<div class="report-kpi"><div class="label">${escapeHtml(a)}</div><div class="value">${escapeHtml(b)}</div></div>`).join('')}</div>
   <div class="report-section"><h2>判定理由</h2><table class="report-table"><tbody><tr><th>Red該当理由</th><td>${escapeHtml(val(74,dayIndex) || '該当なし')}</td></tr><tr><th>主要リスク該当理由</th><td>${escapeHtml(val(75,dayIndex))}</td></tr><tr><th>STAGE</th><td>${escapeHtml(raw(72,dayIndex))}</td></tr><tr><th>運動様式</th><td>${escapeHtml(raw(73,dayIndex))}</td></tr></tbody></table></div>
-  ${reportTable('総合・領域別リスク', [62,63,64,65,66,67,68,69,70,71], dayIndex)}
+  ${reportTable('総合・領域別リスク', [REQUIRED_RATE_ROW,62,63,64,65,66,67,68,69,70,71], dayIndex)}
   ${reportTable('主要指標', [47,55,54,51,49,20,18,38,17,22,23,32,26,12,16,21,58], dayIndex)}
    ${reportTable('入力値一覧', [6,5,7,8,9,10,11,12,13,14,15,16,17,18,19,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,SBP_ROW,DBP_ROW,51,52,53,54,55,56,57,58,59,60,61,72,73], dayIndex)}
  </article>`;
@@ -595,7 +605,7 @@ function renderDayReports(dayIndexes) {
     ['必須入力率', d=>requiredInputRateText(d)],
     ['判定ステータス', d=>val(70,d)],
     ['未入力の重要項目', d=>missingRequiredText(d)],
-    ['測定なし/評価対象外', d=>optionalMeasureText(d)],
+    ['測定なし/評価対象外/未測定', d=>optionalMeasureText(d)],
     ['身長 cm', d=>raw(6,d) || '-'],
     ['体重 kg', d=>raw(5,d) || '-'],
     ['BMI', d=>fmt(val(7,d)) || '-'],
@@ -606,7 +616,7 @@ function renderDayReports(dayIndexes) {
     ['推奨負荷', d=>val(71,d)]
    ], dayIndexes)}
    ${multiDayDailyTable('判定理由', [74,75,72,73], dayIndexes)}
-   ${multiDayDailyTable('総合・領域別リスク', [62,63,64,65,66,67,68,69,70,71], dayIndexes)}
+   ${multiDayDailyTable('総合・領域別リスク', [REQUIRED_RATE_ROW,62,63,64,65,66,67,68,69,70,71], dayIndexes)}
    ${multiDayDailyTable('主要指標', [47,55,54,51,49,20,18,38,17,22,23,32,26,12,16,21,58], dayIndexes)}
    ${multiDayDailyTable('入力値一覧', [6,5,7,8,9,10,11,12,13,14,15,16,17,18,19,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,SBP_ROW,DBP_ROW,51,52,53,54,55,56,57,58,59,60,61,72,73], dayIndexes)}
   </article>`;
@@ -636,13 +646,13 @@ function graphReportTable() {
 }
 function renderGraphReport() {
   const latest=latestDay();
-  const kpis=[['最新入力Day', latest>=0?`Day${latest+1}`:'未入力'], ['必須入力率', latest>=0?requiredInputRateText(latest):'-'], ['総合判定', latest>=0?val(70,latest):'-'], ['総合点', latest>=0?fmt(val(69,latest)):'-'], ['Red flag数', latest>=0?fmt(val(68,latest)):'-'], ['未入力の重要項目', latest>=0?missingRequiredText(latest):'-'], ['測定なし/評価対象外', latest>=0?optionalMeasureText(latest):'-']];
+  const kpis=[['最新入力Day', latest>=0?`Day${latest+1}`:'未入力'], ['必須入力率', latest>=0?requiredInputRateText(latest):'-'], ['総合判定', latest>=0?val(70,latest):'-'], ['総合点', latest>=0?fmt(val(69,latest)):'-'], ['Red flag数', latest>=0?fmt(val(68,latest)):'-'], ['未入力の重要項目', latest>=0?missingRequiredText(latest):'-'], ['測定なし/評価対象外/未測定', latest>=0?optionalMeasureText(latest):'-']];
   return `<div class="print-actions">${printLayoutControls()}<button class="action" id="backFromPrintBtn">戻る</button><button class="action primary" id="doPrintBtn">印刷/PDF保存</button></div>
  <article class="day-report graph-report">
   <h1>主要指標グラフ</h1>
   <div class="subtitle">日次入力のDay1〜Day14から作成</div>
   <div class="report-case"><strong>症例ID</strong>${escapeHtml(caseId || '未入力')}<br><small>カルテIDやイニシャルは記入しないでください。</small></div>
-  ${latest>=0 && (safetyMessage(latest) || optionalMeasureText(latest)!=='なし') ? `<div class="safety-warning">${escapeHtml(safetyMessage(latest) || '安全判定に必要な項目は入力済みです')}<small>未入力の重要項目：${escapeHtml(missingRequiredText(latest))}</small><small>測定なし/評価対象外：${escapeHtml(optionalMeasureText(latest))}</small></div>` : ''}
+  ${latest>=0 && (safetyMessage(latest) || optionalMeasureText(latest)!=='なし') ? `<div class="safety-warning">${escapeHtml(safetyMessage(latest) || '安全判定に必要な項目は入力済みです')}<small>未入力の重要項目：${escapeHtml(missingRequiredText(latest))}</small><small>測定なし/評価対象外/未測定：${escapeHtml(optionalMeasureText(latest))}</small></div>` : ''}
   <div class="report-kpis">${kpis.map(([a,b])=>`<div class="report-kpi"><div class="label">${escapeHtml(a)}</div><div class="value">${escapeHtml(b)}</div></div>`).join('')}</div>
   <div class="report-section"><h2>総合判定・領域別リスク</h2><canvas id="printRiskChart"></canvas><div class="legend" id="printRiskLegend"></div></div>
   <div class="report-section"><h2>主要臨床指標</h2><div class="mini-chart-grid" id="printClinicalMiniCharts"></div></div>
