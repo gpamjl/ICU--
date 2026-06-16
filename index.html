@@ -255,12 +255,20 @@ const CASE_MIGRATION_KEY = 'icuAwCaseStorageMigratedV1';
 const VIEW_MODE_KEY = 'icuAwViewModeV1';
 const REQUIRED_ROWS = [51,47,41,22,18,21,12,34,53,56,57,58];
 const REQUIRED_THRESHOLD = 0.8;
+const SBP_ROW = 5101;
+const DBP_ROW = 5102;
+const CUSTOM_DAILY_ROWS = [
+  {r:SBP_ROW, category:'循環', item:'収縮期血圧 mmHg', standard:'MAP未入力時の自動計算に使用'},
+  {r:DBP_ROW, category:'循環', item:'拡張期血圧 mmHg', standard:'MAP未入力時の自動計算に使用'}
+];
+const OPTIONAL_MEASURE_ROWS = [47,41];
+const OPTIONAL_MEASURE_VALUES = ['測定なし','評価対象外'];
 let selectedDay = 0;
 let caseId = localStorage.getItem(CASE_ID_KEY) || '';
 let values = loadState(caseId);
 let viewMode = localStorage.getItem(VIEW_MODE_KEY) || 'large';
 
-function blankGrid() { const g={}; for (const row of DATA.dailyRows) g[row.r]=Array(14).fill(''); return g; }
+function blankGrid() { const g={}; for (const row of [...DATA.dailyRows, ...CUSTOM_DAILY_ROWS]) g[row.r]=Array(14).fill(''); return g; }
 function normalizeCaseId(value) { return String(value || '').trim(); }
 function caseStorageKey(id) { return `${STORAGE_KEY}:case:${encodeURIComponent(normalizeCaseId(id) || '__no_case__')}`; }
 function loadState(id=caseId) {
@@ -302,12 +310,18 @@ function switchCase() {
   setTimeout(()=>document.getElementById('status').textContent='入力はこのブラウザに自動保存されます',1200);
 }
 function raw(r,d) { return (values[r] && values[r][d]) ?? ''; }
-function num(r,d) { const v=raw(r,d); if (v==='' || v===null || v===undefined) return ''; const n=Number(String(v).replace(/,/g,'')); return Number.isFinite(n) ? n : ''; }
+function isOptionalMeasureValue(v) { return OPTIONAL_MEASURE_VALUES.includes(String(v || '').trim()); }
+function directNum(r,d) { const v=raw(r,d); if (v==='' || v===null || v===undefined || isOptionalMeasureValue(v)) return ''; const n=Number(String(v).replace(/,/g,'')); return Number.isFinite(n) ? n : ''; }
+function calculatedMap(d) { const sbp=directNum(SBP_ROW,d), dbp=directNum(DBP_ROW,d); return (sbp===''||dbp==='') ? '' : (sbp + dbp*2) / 3; }
+function num(r,d) { if (r===51) { const direct=directNum(51,d); return direct!=='' ? direct : calculatedMap(d); } return directNum(r,d); }
 function isBlank(v) { return v==='' || v===null || v===undefined || Number.isNaN(v); }
 function n(v) { return isBlank(v) ? 0 : Number(v); }
 function fmt(v) { if (isBlank(v)) return ''; if (typeof v==='string') return v; if (!Number.isFinite(v)) return ''; if (Math.abs(v) >= 100) return String(Math.round(v*10)/10); if (Math.abs(v) >= 10) return String(Math.round(v*10)/10); return String(Math.round(v*100)/100); }
+function displayValue(row,d) { return row===51 ? num(51,d) : (formulaRows.has(row) ? val(row,d) : raw(row,d)); }
 function requiredItemName(row) { return rowMeta(row).item || `行${row}`; }
-function requiredMissingRows(d) { return REQUIRED_ROWS.filter(r=>isBlank(raw(r,d))); }
+function isRequiredSatisfied(row,d) { if (row===51) return num(51,d)!==''; const v=raw(row,d); return !isBlank(v) || (OPTIONAL_MEASURE_ROWS.includes(row) && isOptionalMeasureValue(v)); }
+function optionalMeasureText(d) { const rows=OPTIONAL_MEASURE_ROWS.filter(r=>isOptionalMeasureValue(raw(r,d))).map(r=>`${requiredItemName(r)}: ${raw(r,d)}`); return rows.length ? rows.join('、') : 'なし'; }
+function requiredMissingRows(d) { return REQUIRED_ROWS.filter(r=>!isRequiredSatisfied(r,d)); }
 function requiredInputCount(d) { return REQUIRED_ROWS.length - requiredMissingRows(d).length; }
 function requiredInputRate(d) { return REQUIRED_ROWS.length ? requiredInputCount(d) / REQUIRED_ROWS.length : 1; }
 function requiredInputRateText(d) { const count=requiredInputCount(d), total=REQUIRED_ROWS.length; return `${count}/${total}（${Math.round(requiredInputRate(d)*100)}%）`; }
@@ -320,6 +334,7 @@ function lt(r,d,t) { const v=num(r,d); return v!=='' && v<t; }
 function le(r,d,t) { const v=num(r,d); return v!=='' && v<=t; }
 function betweenBad(r,d,lo,hi) { const v=num(r,d); return v!=='' && (v<lo || v>hi); }
 function val(r,d) {
+  if (r===51) return num(51,d);
   if (!formulaRows.has(r)) return raw(r,d);
   if (r===20) { const a=num(18,d), b=num(19,d); return (a===''||b==='') ? '' : a/b; }
   if (r===25) { const a=num(24,d); return a==='' ? '' : a*24; }
@@ -352,15 +367,16 @@ function gtVal(v,t) { return !isBlank(v) && Number(v)>t; }
 function redReasons(d) { if (val(70,d)!=='Red') return ''; const a=[]; if(ge(47,d,5))a.push('乳酸≥5'); if(le(41,d,7.2))a.push('pH≤7.2'); if(lt(51,d,60))a.push('MAP<60'); if(lt(12,d,3))a.push('血小板<3万'); if(ge(21,d,5000))a.push('CK≥5000'); if(betweenBad(34,d,3,6))a.push('K<3.0または>6.0'); if(lt(22,d,70))a.push('低血糖<70'); if(ge(18,d,80))a.push('BUN≥80'); if(raw(53,d)==='増量')a.push('昇圧薬増量'); if(raw(56,d)==='有')a.push('mottling有'); if(val(69,d)>=7)a.push('総合点≥7'); return a.join('、'); }
 function riskReasons(d) { if (val(69,d)===0) return 'リスク加点なし'; const a=[]; [[62,'微小循環'],[63,'異化'],[64,'インスリン抵抗性'],[65,'代謝/電解質'],[66,'凝固'],[67,'筋損傷/ICU-AW']].forEach(([r,label])=>{ if(val(r,d)>0)a.push(`${label} ${val(r,d)}点`); }); return a.join('、'); }
 function formulaFor(row, day) { const item = DATA.dailyRows.find(r=>r.r===row); return item?.days?.[day]?.f || ''; }
-function isTextRow(r) { return [8,23,53,56,57,60,61,72,73].includes(r); }
+function isTextRow(r) { return [8,23,41,47,51,53,56,57,60,61,72,73].includes(r); }
 function dropdownOptions(r) {
  if (r===8) return ['','0: 入室直後','1: 24-72h','2: 3-7日','3: 7日以降','4: 退室前後'];
  if (r===23 || r===56 || r===57) return ['','無','有'];
  if (r===53) return ['','なし','減量','不変','増量'];
  if (r===72) return ['','I 関節可動域訓練','II 体位ドレナージ','III ギャッチアップ30°','IV ギャッチアップ60°','V 端坐位','VI 立位・足踏み','VII 歩行'];
- if (r===73) return ['','Passive','Active-assistive','Active','Resistance'];
- return null;
+  if (r===73) return ['','Passive','Active-assistive','Active','Resistance'];
+  return null;
 }
+function measureListId(r,d) { return `measureOptions_${r}_${d}`; }
 function isDayHeaderRow(r) { return r===4; }
 function focusNextCell(el) {
  const d=Number(el.dataset.d);
@@ -382,6 +398,8 @@ function renderDaily() {
  const tbody=table.querySelector('tbody');
   const visibleRows=DATA.dailyRows.filter(r=>r.r>=5 && r.r<=75 && ![5,6,72,73].includes(r.r));
   visibleRows.unshift(...DATA.dailyRows.filter(r=>[6,5].includes(r.r)).sort((a,b)=>a.r===6?-1:b.r===6?1:0));
+  const mapIndex=visibleRows.findIndex(r=>r.r===51);
+  if (mapIndex>=0) visibleRows.splice(mapIndex,0,...CUSTOM_DAILY_ROWS);
   visibleRows.push(...DATA.dailyRows.filter(r=>[72,73].includes(r.r)));
  for (const row of visibleRows) {
    const meta=rowMeta(row.r);
@@ -408,7 +426,18 @@ function renderDaily() {
         td.appendChild(select);
       } else {
         const input=document.createElement('input'); input.className='cell'; input.value=raw(row.r,d); input.dataset.r=row.r; input.dataset.d=d; input.inputMode=isTextRow(row.r)?'text':'decimal';
-        input.addEventListener('input', e=>{ values[row.r][d]=e.target.value; saveState(); refreshCalculated(); });
+        if (row.r===51 && raw(51,d)==='' && calculatedMap(d)!=='') {
+          input.placeholder=fmt(calculatedMap(d));
+          input.title='収縮期血圧/拡張期血圧から自動計算';
+        }
+        if (OPTIONAL_MEASURE_ROWS.includes(row.r)) {
+          input.setAttribute('list', measureListId(row.r,d));
+          const datalist=document.createElement('datalist');
+          datalist.id=measureListId(row.r,d);
+          OPTIONAL_MEASURE_VALUES.forEach(opt=>{ const o=document.createElement('option'); o.value=opt; datalist.appendChild(o); });
+          td.appendChild(datalist);
+        }
+        input.addEventListener('input', e=>{ values[row.r][d]=e.target.value; saveState(); (row.r===SBP_ROW || row.r===DBP_ROW) ? recalc() : refreshCalculated(); });
         input.addEventListener('keydown', moveOnEnter);
         td.appendChild(input);
       }
@@ -421,10 +450,11 @@ function renderDaily() {
 function dailySafetySummary() {
  const missing=missingRequiredText(selectedDay);
  const message=safetyMessage(selectedDay);
- return `<div class="safety-warning">
+ return `<div class="safety-warning" id="dailySafetySummary">
    必須項目の入力率：${escapeHtml(requiredInputRateText(selectedDay))} ／ 判定ステータス：${escapeHtml(val(70,selectedDay))}
    ${message ? `<small>${escapeHtml(message)}</small>` : ''}
    <small>未入力の重要項目：${escapeHtml(missing)}</small>
+   <small>測定なし/評価対象外：${escapeHtml(optionalMeasureText(selectedDay))}</small>
  </div>`;
 }
 function renderGraph() {
@@ -448,18 +478,20 @@ function renderGraph() {
 }
 function renderKpis() {
   const latest = latestDay(); const k=document.getElementById('kpis');
-  const cards=[['最新入力Day', latest>=0?`Day${latest+1}`:'未入力'], ['必須入力率', latest>=0?requiredInputRateText(latest):'-'], ['総合判定', latest>=0?val(70,latest):''], ['総合点', latest>=0?fmt(val(69,latest)):''], ['Red flag数', latest>=0?fmt(val(68,latest)):''], ['未入力の重要項目', latest>=0?missingRequiredText(latest):'-']];
+  const cards=[['最新入力Day', latest>=0?`Day${latest+1}`:'未入力'], ['必須入力率', latest>=0?requiredInputRateText(latest):'-'], ['総合判定', latest>=0?val(70,latest):''], ['総合点', latest>=0?fmt(val(69,latest)):''], ['Red flag数', latest>=0?fmt(val(68,latest)):''], ['未入力の重要項目', latest>=0?missingRequiredText(latest):'-'], ['測定なし/評価対象外', latest>=0?optionalMeasureText(latest):'-']];
   k.innerHTML=cards.map(([a,b])=>`<div class="kpi"><div class="label">${a}</div><div class="value">${escapeHtml(b)}</div></div>`).join('');
 }
 function rowMeta(row) {
+ if (row===SBP_ROW || row===DBP_ROW) return CUSTOM_DAILY_ROWS.find(r=>r.r===row);
  if (row===6) return {category:'基本', item:'身長 cm', standard:'実測/推定'};
  if (row===7) return {category:'基本', item:'BMI', standard:'体重kg÷身長m²（自動計算）'};
+ if (row===51) return {category:'循環', item:'MAP mmHg', standard:'直接入力、または収縮期/拡張期から自動計算'};
  if (row===72) return {category:'記録', item:'STAGE', standard:'I〜VIIから選択'};
  if (row===73) return {category:'記録', item:'運動様式', standard:'Passive / Active-assistive / Active / Resistance'};
  return DATA.dailyRows.find(r=>r.r===row) || {category:'', item:'', standard:''};
 }
 function reportRow(row, d) {
- const m=rowMeta(row), v=formulaRows.has(row) ? val(row,d) : raw(row,d);
+ const m=rowMeta(row), v=displayValue(row,d);
  return `<tr><td>${escapeHtml(m.category)}</td><td>${escapeHtml(m.item)}</td><td>${escapeHtml(m.standard)}</td><td class="value">${escapeHtml(fmt(v))}</td></tr>`;
 }
 function reportTable(title, rows, d) {
@@ -480,7 +512,10 @@ function exportCsv() {
   rows.push(['', '', '安全判定', '判定ステータス', '', ...DAYS.map((_,d)=>val(70,d))]);
   rows.push(['', '', '安全判定', '安全判定メッセージ', '', ...DAYS.map((_,d)=>safetyMessage(d))]);
   rows.push(['', '', '安全判定', '未入力の重要項目', '', ...DAYS.map((_,d)=>missingRequiredText(d))]);
+  rows.push(['', '', '安全判定', '測定なし/評価対象外', '', ...DAYS.map((_,d)=>optionalMeasureText(d))]);
   const exportRows=DATA.dailyRows.filter(r=>r.r>=5 && r.r<=75 && !isDayHeaderRow(r.r));
+  const exportMapIndex=exportRows.findIndex(r=>r.r===51);
+  if (exportMapIndex>=0) exportRows.splice(exportMapIndex,0,...CUSTOM_DAILY_ROWS);
   for (const row of exportRows) {
     const meta=rowMeta(row.r);
     rows.push([
@@ -489,7 +524,7 @@ function exportCsv() {
       meta.category,
       meta.item,
       meta.standard,
-      ...DAYS.map((_,d)=>fmt(formulaRows.has(row.r) ? val(row.r,d) : raw(row.r,d)))
+      ...DAYS.map((_,d)=>fmt(displayValue(row.r,d)))
     ]);
   }
   const csv='\ufeff'+rows.map(row=>row.map(csvCell).join(',')).join('\r\n');
@@ -520,12 +555,12 @@ function renderDayReport(dayIndex) {
   <h1>ICU-AW 日次評価レポート</h1>
   <div class="subtitle">日次入力から作成：Day${day}</div>
   <div class="report-case"><strong>症例ID</strong>${escapeHtml(caseId || '未入力')}<br><small>カルテIDやイニシャルは記入しないでください。</small></div>
-  ${safetyMessage(dayIndex) ? `<div class="safety-warning">${escapeHtml(safetyMessage(dayIndex))}<small>未入力の重要項目：${escapeHtml(missingRequiredText(dayIndex))}</small></div>` : ''}
+  ${(safetyMessage(dayIndex) || optionalMeasureText(dayIndex)!=='なし') ? `<div class="safety-warning">${escapeHtml(safetyMessage(dayIndex) || '安全判定に必要な項目は入力済みです')}<small>未入力の重要項目：${escapeHtml(missingRequiredText(dayIndex))}</small><small>測定なし/評価対象外：${escapeHtml(optionalMeasureText(dayIndex))}</small></div>` : ''}
   <div class="report-kpis">${kpis.map(([a,b])=>`<div class="report-kpi"><div class="label">${escapeHtml(a)}</div><div class="value">${escapeHtml(b)}</div></div>`).join('')}</div>
   <div class="report-section"><h2>判定理由</h2><table class="report-table"><tbody><tr><th>Red該当理由</th><td>${escapeHtml(val(74,dayIndex) || '該当なし')}</td></tr><tr><th>主要リスク該当理由</th><td>${escapeHtml(val(75,dayIndex))}</td></tr><tr><th>STAGE</th><td>${escapeHtml(raw(72,dayIndex))}</td></tr><tr><th>運動様式</th><td>${escapeHtml(raw(73,dayIndex))}</td></tr></tbody></table></div>
   ${reportTable('総合・領域別リスク', [62,63,64,65,66,67,68,69,70,71], dayIndex)}
   ${reportTable('主要指標', [47,55,54,51,49,20,18,38,17,22,23,32,26,12,16,21,58], dayIndex)}
-  ${reportTable('入力値一覧', [6,5,7,8,9,10,11,12,13,14,15,16,17,18,19,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,72,73], dayIndex)}
+   ${reportTable('入力値一覧', [6,5,7,8,9,10,11,12,13,14,15,16,17,18,19,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,SBP_ROW,DBP_ROW,51,52,53,54,55,56,57,58,59,60,61,72,73], dayIndex)}
  </article>`;
 }
 function parseDaySelection(text) {
@@ -560,6 +595,7 @@ function renderDayReports(dayIndexes) {
     ['必須入力率', d=>requiredInputRateText(d)],
     ['判定ステータス', d=>val(70,d)],
     ['未入力の重要項目', d=>missingRequiredText(d)],
+    ['測定なし/評価対象外', d=>optionalMeasureText(d)],
     ['身長 cm', d=>raw(6,d) || '-'],
     ['体重 kg', d=>raw(5,d) || '-'],
     ['BMI', d=>fmt(val(7,d)) || '-'],
@@ -572,7 +608,7 @@ function renderDayReports(dayIndexes) {
    ${multiDayDailyTable('判定理由', [74,75,72,73], dayIndexes)}
    ${multiDayDailyTable('総合・領域別リスク', [62,63,64,65,66,67,68,69,70,71], dayIndexes)}
    ${multiDayDailyTable('主要指標', [47,55,54,51,49,20,18,38,17,22,23,32,26,12,16,21,58], dayIndexes)}
-   ${multiDayDailyTable('入力値一覧', [6,5,7,8,9,10,11,12,13,14,15,16,17,18,19,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,72,73], dayIndexes)}
+   ${multiDayDailyTable('入力値一覧', [6,5,7,8,9,10,11,12,13,14,15,16,17,18,19,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,SBP_ROW,DBP_ROW,51,52,53,54,55,56,57,58,59,60,61,72,73], dayIndexes)}
   </article>`;
 }
 function multiDayTable(title, rows, dayIndexes) {
@@ -583,7 +619,7 @@ function multiDayDailyTable(title, rowNumbers, dayIndexes) {
   const body=rowNumbers.map(row=>{
     const m=rowMeta(row);
     const cells=dayIndexes.map(d=>{
-      const v=formulaRows.has(row) ? val(row,d) : raw(row,d);
+      const v=displayValue(row,d);
       return `<td class="day-value">${escapeHtml(fmt(v))}</td>`;
     }).join('');
     return `<tr><td>${escapeHtml(m.category)}</td><td>${escapeHtml(m.item)}</td><td>${escapeHtml(m.standard)}</td>${cells}</tr>`;
@@ -600,13 +636,13 @@ function graphReportTable() {
 }
 function renderGraphReport() {
   const latest=latestDay();
-  const kpis=[['最新入力Day', latest>=0?`Day${latest+1}`:'未入力'], ['必須入力率', latest>=0?requiredInputRateText(latest):'-'], ['総合判定', latest>=0?val(70,latest):'-'], ['総合点', latest>=0?fmt(val(69,latest)):'-'], ['Red flag数', latest>=0?fmt(val(68,latest)):'-'], ['未入力の重要項目', latest>=0?missingRequiredText(latest):'-']];
+  const kpis=[['最新入力Day', latest>=0?`Day${latest+1}`:'未入力'], ['必須入力率', latest>=0?requiredInputRateText(latest):'-'], ['総合判定', latest>=0?val(70,latest):'-'], ['総合点', latest>=0?fmt(val(69,latest)):'-'], ['Red flag数', latest>=0?fmt(val(68,latest)):'-'], ['未入力の重要項目', latest>=0?missingRequiredText(latest):'-'], ['測定なし/評価対象外', latest>=0?optionalMeasureText(latest):'-']];
   return `<div class="print-actions">${printLayoutControls()}<button class="action" id="backFromPrintBtn">戻る</button><button class="action primary" id="doPrintBtn">印刷/PDF保存</button></div>
  <article class="day-report graph-report">
   <h1>主要指標グラフ</h1>
   <div class="subtitle">日次入力のDay1〜Day14から作成</div>
   <div class="report-case"><strong>症例ID</strong>${escapeHtml(caseId || '未入力')}<br><small>カルテIDやイニシャルは記入しないでください。</small></div>
-  ${latest>=0 && safetyMessage(latest) ? `<div class="safety-warning">${escapeHtml(safetyMessage(latest))}<small>未入力の重要項目：${escapeHtml(missingRequiredText(latest))}</small></div>` : ''}
+  ${latest>=0 && (safetyMessage(latest) || optionalMeasureText(latest)!=='なし') ? `<div class="safety-warning">${escapeHtml(safetyMessage(latest) || '安全判定に必要な項目は入力済みです')}<small>未入力の重要項目：${escapeHtml(missingRequiredText(latest))}</small><small>測定なし/評価対象外：${escapeHtml(optionalMeasureText(latest))}</small></div>` : ''}
   <div class="report-kpis">${kpis.map(([a,b])=>`<div class="report-kpi"><div class="label">${escapeHtml(a)}</div><div class="value">${escapeHtml(b)}</div></div>`).join('')}</div>
   <div class="report-section"><h2>総合判定・領域別リスク</h2><canvas id="printRiskChart"></canvas><div class="legend" id="printRiskLegend"></div></div>
   <div class="report-section"><h2>主要臨床指標</h2><div class="mini-chart-grid" id="printClinicalMiniCharts"></div></div>
@@ -647,6 +683,8 @@ function startGraphPrintFlow() {
 }
 function latestDay() { for(let d=13; d>=0; d--) { for (const r of Object.keys(values)) if (!formulaRows.has(Number(r)) && raw(Number(r),d)!=='') return d; } return -1; }
 function refreshCalculated() {
+ const safety=document.getElementById('dailySafetySummary');
+ if (safety) safety.outerHTML=dailySafetySummary();
  document.querySelectorAll('#dailyTable td[data-r]').forEach(td=>{
    const r=Number(td.dataset.r), d=Number(td.dataset.d), v=val(r,d);
    if (r===70) td.innerHTML=`<span class="badge ${v}">${v}</span>`; else td.textContent=fmt(v);
