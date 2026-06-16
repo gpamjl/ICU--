@@ -65,6 +65,9 @@ td.note { min-width:260px; color:#46566f; }
 input.cell, select.cell { width:74px; border:0; background:transparent; text-align:right; font:inherit; font-size:15px; font-weight:650; color:inherit; outline:1px solid transparent; padding:5px 4px; }
 input.cell:focus, select.cell:focus { outline:2px solid #0ea5e9; background:#fff; border-radius:3px; }
 .text-cell input.cell, .text-cell select.cell { text-align:left; width:96px; }
+.measure-control { display:flex; gap:3px; align-items:center; }
+.measure-control input.cell { width:54px; min-width:0; }
+.measure-control select.measure-status { width:74px; border:1px solid #fca5a5; border-radius:4px; background:#fff7f7; color:#7f1d1d; font:inherit; font-size:11px; padding:3px 2px; }
 .badge { display:inline-block; border-radius:999px; padding:4px 10px; font-weight:700; color:#fff; font-size:13px; }
 .badge.Green { background:var(--green); } .badge.Yellow { background:var(--yellow); } .badge.Red { background:var(--red); }
 .badge.判定不能 { background:#64748b; }
@@ -81,6 +84,8 @@ body.form-overview td.standard { min-width:0; width:92px; font-size:9px; }
 body.form-overview td.day { width:42px; }
 body.form-overview input.cell, body.form-overview select.cell { width:100%; min-width:0; min-height:25px; padding:1px 2px; font-size:10px; text-align:right; }
 body.form-overview .text-cell input.cell, body.form-overview .text-cell select.cell { width:100%; font-size:9px; }
+body.form-overview .measure-control { display:block; }
+body.form-overview .measure-control input.cell, body.form-overview .measure-control select.measure-status { width:100%; font-size:8px; min-height:18px; padding:1px; }
 body.form-overview .badge { padding:2px 5px; font-size:9px; }
 .dashboard { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:12px; margin-bottom:16px; }
 .kpi { background:#fff; border:1px solid var(--line); border-radius:8px; padding:12px; }
@@ -178,6 +183,7 @@ canvas { width:100%; height:310px; display:block; }
   body.form-overview td.day { width:28px; }
   body.form-overview input.cell, body.form-overview select.cell { width:100%; min-width:0; min-height:24px; padding:1px; font-size:9px; text-align:right; }
   body.form-overview .text-cell input.cell, body.form-overview .text-cell select.cell { width:100%; font-size:8px; }
+  body.form-overview .measure-control input.cell, body.form-overview .measure-control select.measure-status { font-size:7px; min-height:16px; }
   body.form-overview .badge { padding:2px 4px; font-size:8px; }
   canvas { height:240px; }
   .mini-chart-grid { grid-template-columns:1fr; }
@@ -434,21 +440,32 @@ function renderDaily() {
         select.addEventListener('keydown', moveOnEnter);
         td.appendChild(select);
       } else {
-        const input=document.createElement('input'); input.className='cell'; input.value=raw(row.r,d); input.dataset.r=row.r; input.dataset.d=d; input.inputMode=isTextRow(row.r)?'text':'decimal';
+        const input=document.createElement('input'); input.className='cell'; input.value=isOptionalMeasureValue(raw(row.r,d)) ? '' : raw(row.r,d); input.dataset.r=row.r; input.dataset.d=d; input.inputMode=isTextRow(row.r)?'text':'decimal';
         if (row.r===51 && raw(51,d)==='' && calculatedMap(d)!=='') {
           input.placeholder=fmt(calculatedMap(d));
           input.title='収縮期血圧/拡張期血圧から自動計算';
         }
         if (OPTIONAL_MEASURE_ROWS.includes(row.r)) {
-          input.setAttribute('list', measureListId(row.r,d));
-          const datalist=document.createElement('datalist');
-          datalist.id=measureListId(row.r,d);
-          OPTIONAL_MEASURE_VALUES.forEach(opt=>{ const o=document.createElement('option'); o.value=opt; datalist.appendChild(o); });
-          td.appendChild(datalist);
+          const wrap=document.createElement('div');
+          wrap.className='measure-control';
+          const status=document.createElement('select');
+          status.className='measure-status';
+          status.dataset.r=row.r; status.dataset.d=d;
+          ['',...OPTIONAL_MEASURE_VALUES].forEach(opt=>{ const o=document.createElement('option'); o.value=opt; o.textContent=opt || '数値'; status.appendChild(o); });
+          status.value=isOptionalMeasureValue(raw(row.r,d)) ? raw(row.r,d) : '';
+          input.placeholder='数値';
+          input.addEventListener('input', e=>{ status.value=''; values[row.r][d]=e.target.value; saveState(); refreshCalculated(); });
+          input.addEventListener('keydown', moveOnEnter);
+          status.addEventListener('change', e=>{ values[row.r][d]=e.target.value; input.value=''; saveState(); refreshCalculated(); });
+          status.addEventListener('keydown', moveOnEnter);
+          wrap.appendChild(input);
+          wrap.appendChild(status);
+          td.appendChild(wrap);
+        } else {
+          input.addEventListener('input', e=>{ values[row.r][d]=e.target.value; saveState(); (row.r===SBP_ROW || row.r===DBP_ROW) ? recalc() : refreshCalculated(); });
+          input.addEventListener('keydown', moveOnEnter);
+          td.appendChild(input);
         }
-        input.addEventListener('input', e=>{ values[row.r][d]=e.target.value; saveState(); (row.r===SBP_ROW || row.r===DBP_ROW) ? recalc() : refreshCalculated(); });
-        input.addEventListener('keydown', moveOnEnter);
-        td.appendChild(input);
       }
      }
      tr.appendChild(td);
