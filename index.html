@@ -65,6 +65,10 @@ td.note { min-width:260px; color:#46566f; }
 input.cell, select.cell { width:74px; border:0; background:transparent; text-align:right; font:inherit; font-size:15px; font-weight:650; color:inherit; outline:1px solid transparent; padding:5px 4px; }
 input.cell:focus, select.cell:focus { outline:2px solid #0ea5e9; background:#fff; border-radius:3px; }
 .text-cell input.cell, .text-cell select.cell { text-align:left; width:96px; }
+.copy-control { display:flex; gap:4px; align-items:center; justify-content:flex-end; }
+.copy-control input.cell { width:54px; flex:1 1 54px; min-width:48px; }
+.copy-prev-btn { border:1px solid #b6c2d2; background:#f8fafc; color:#334155; border-radius:5px; padding:4px 5px; font:inherit; font-size:10px; font-weight:750; cursor:pointer; white-space:nowrap; }
+.copy-prev-btn:hover, .copy-prev-btn:focus { background:#e0f2fe; border-color:#38bdf8; outline:none; }
 .measure-control { display:flex; gap:3px; align-items:center; }
 .measure-control input.cell { width:54px; min-width:0; }
 .measure-control select.measure-status { width:74px; border:1px solid #fca5a5; border-radius:4px; background:#fff7f7; color:#7f1d1d; font:inherit; font-size:11px; padding:3px 2px; }
@@ -84,6 +88,8 @@ body.form-overview td.standard { min-width:0; width:92px; font-size:9px; }
 body.form-overview td.day { width:42px; }
 body.form-overview input.cell, body.form-overview select.cell { width:100%; min-width:0; min-height:25px; padding:1px 2px; font-size:10px; text-align:right; }
 body.form-overview .text-cell input.cell, body.form-overview .text-cell select.cell { width:100%; font-size:9px; }
+body.form-overview .copy-control { display:block; }
+body.form-overview .copy-control input.cell, body.form-overview .copy-prev-btn { width:100%; font-size:8px; min-height:18px; padding:1px; }
 body.form-overview .measure-control { display:block; }
 body.form-overview .measure-control input.cell, body.form-overview .measure-control select.measure-status { width:100%; font-size:8px; min-height:18px; padding:1px; }
 body.form-overview .badge { padding:2px 5px; font-size:9px; }
@@ -162,6 +168,7 @@ canvas { width:100%; height:310px; display:block; }
   .case-panel { display:block; padding:10px; }
   .case-panel label { display:block; }
   .case-panel input { width:100%; min-width:0; margin-top:6px; font-size:16px; }
+  .case-panel button { width:100%; margin-top:8px; }
   .case-note { display:block; margin-top:6px; }
   .dashboard { grid-template-columns:1fr 1fr; }
   .table-wrap { max-height:none; }
@@ -183,6 +190,7 @@ canvas { width:100%; height:310px; display:block; }
   body.form-overview td.day { width:28px; }
   body.form-overview input.cell, body.form-overview select.cell { width:100%; min-width:0; min-height:24px; padding:1px; font-size:9px; text-align:right; }
   body.form-overview .text-cell input.cell, body.form-overview .text-cell select.cell { width:100%; font-size:8px; }
+  body.form-overview .copy-control input.cell, body.form-overview .copy-prev-btn { font-size:7px; min-height:16px; }
   body.form-overview .measure-control input.cell, body.form-overview .measure-control select.measure-status { font-size:7px; min-height:16px; }
   body.form-overview .badge { padding:2px 4px; font-size:8px; }
   canvas { height:240px; }
@@ -240,6 +248,7 @@ canvas { width:100%; height:310px; display:block; }
   <section class="case-panel" aria-label="症例ID入力">
     <label>症例ID <input id="caseIdInput" type="text" autocomplete="off" placeholder="例: Case-001"></label>
     <button class="action" id="caseOpenBtn">症例を開く/切替</button>
+    <button class="action primary" id="caseSaveBtn">記録</button>
     <span class="case-current" id="caseCurrentLabel"></span>
     <span class="case-note">注意：カルテIDやイニシャルは記入しないでください。</span>
   </section>
@@ -273,6 +282,7 @@ const OPTIONAL_MEASURE_ROWS = [47,41];
 const OPTIONAL_MEASURE_VALUES = ['測定なし','評価対象外'];
 const UNMEASURED_ROWS = [56,57];
 const UNMEASURED_VALUE = '未測定';
+const COPY_PREVIOUS_ROWS = [5,6];
 let selectedDay = 0;
 let caseId = localStorage.getItem(CASE_ID_KEY) || '';
 let values = loadState(caseId);
@@ -300,6 +310,13 @@ function saveState() {
   localStorage.setItem(caseStorageKey(caseId), JSON.stringify(values));
   localStorage.setItem(CASE_ID_KEY, caseId);
 }
+function flashStatus(message, delay=1600) {
+  const status=document.getElementById('status');
+  if (!status) return;
+  if (window.__statusTimer) clearTimeout(window.__statusTimer);
+  status.textContent=message;
+  window.__statusTimer=setTimeout(()=>status.textContent='入力はこのブラウザに自動保存されます',delay);
+}
 function setCurrentCaseLabel() {
   const label=document.getElementById('caseCurrentLabel');
   if (label) label.textContent=caseId ? `現在の症例ID：${caseId}` : '現在の症例ID：未設定';
@@ -316,8 +333,21 @@ function switchCase() {
   setCurrentCaseLabel();
   recalc();
   if (document.getElementById('graph').classList.contains('active')) renderGraph();
-  document.getElementById('status').textContent=`${caseId} のデータを開きました`;
-  setTimeout(()=>document.getElementById('status').textContent='入力はこのブラウザに自動保存されます',1200);
+  flashStatus(`${caseId} のデータを開きました`);
+}
+function confirmSaveCase() {
+  const input=document.getElementById('caseIdInput');
+  const nextId=normalizeCaseId(input.value);
+  if (!nextId) { alert('症例IDを入力してください。'); return; }
+  if (nextId!==caseId) {
+    caseId=nextId;
+    localStorage.setItem(CASE_ID_KEY, caseId);
+  }
+  saveState();
+  input.value=caseId;
+  setCurrentCaseLabel();
+  alert(`症例ID「${caseId}」と入力データを、この端末のブラウザ内に保存しました。`);
+  flashStatus(`${caseId} を記録しました`);
 }
 function raw(r,d) { return (values[r] && values[r][d]) ?? ''; }
 function isOptionalMeasureValue(v) { return OPTIONAL_MEASURE_VALUES.includes(String(v || '').trim()); }
@@ -402,6 +432,18 @@ function moveOnEnter(e) {
  e.preventDefault();
  focusNextCell(e.currentTarget);
 }
+function copyPreviousDayValue(row, day) {
+  if (!COPY_PREVIOUS_ROWS.includes(row) || day<=0) return;
+  const previous=raw(row, day-1);
+  if (previous==='') { alert('前日の値が未入力です。'); return; }
+  if (!values[row]) values[row]=Array(14).fill('');
+  values[row][day]=previous;
+  saveState();
+  const input=document.querySelector(`#dailyTable .cell[data-r="${row}"][data-d="${day}"]`);
+  if (input) input.value=previous;
+  refreshCalculated();
+  flashStatus(`Day${day+1}に前日の${row===6?'身長':'体重'}をコピーしました`);
+}
 
 function renderDaily() {
  const root=document.getElementById('daily');
@@ -465,7 +507,23 @@ function renderDaily() {
           input.addEventListener('input', e=>{ values[row.r][d]=e.target.value; saveState(); refreshCalculated(); });
           input.addEventListener('blur', ()=>{ if (row.r===SBP_ROW || row.r===DBP_ROW) renderDaily(); });
           input.addEventListener('keydown', moveOnEnter);
-          td.appendChild(input);
+          if (COPY_PREVIOUS_ROWS.includes(row.r)) {
+            const wrap=document.createElement('div');
+            wrap.className='copy-control';
+            wrap.appendChild(input);
+            if (d>0) {
+              const copyBtn=document.createElement('button');
+              copyBtn.type='button';
+              copyBtn.className='copy-prev-btn';
+              copyBtn.textContent='前日と同じ';
+              copyBtn.title=`Day${d}の値をコピー`;
+              copyBtn.addEventListener('click', ()=>copyPreviousDayValue(row.r,d));
+              wrap.appendChild(copyBtn);
+            }
+            td.appendChild(wrap);
+          } else {
+            td.appendChild(input);
+          }
         }
       }
      }
@@ -811,6 +869,7 @@ function setupCaseIdInput() {
   setCurrentCaseLabel();
   input.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); switchCase(); } });
   document.getElementById('caseOpenBtn').addEventListener('click',switchCase);
+  document.getElementById('caseSaveBtn').addEventListener('click',confirmSaveCase);
 }
 function sample() { const set=(r, arr)=>{ values[r]=arr.map(v=>String(v)); }; set(5,[60,60,60,60,60,60,60,60,60,60,60,60,60,60]); set(18,[18,20,22,24,24,23,22,20,19,18,17,17,16,16]); set(19,[0.8,0.82,0.85,0.9,0.88,0.86,0.84,0.82,0.8,0.8,0.78,0.77,0.76,0.75]); set(22,[160,170,190,180,165,150,145,150,155,160,150,145,140,138]); values[23]=['無','無','有','有','無','無','無','無','無','無','無','無','無','無']; set(24,[1,1.2,1.5,1.4,1,0.8,0.7,0.6,0.5,0.4,0.3,0.2,0.2,0.1]); set(29,[5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8]); set(31,[180,180,180,180,180,180,180,180,180,180,180,180,180,180]); set(38,[8,10,12,10,8,6,5,4,3,2,1.5,1.2,1,0.8]); set(41,[7.38,7.36,7.34,7.36,7.38,7.4,7.41,7.41,7.42,7.42,7.43,7.43,7.44,7.44]); set(45,[-1,-2,-3.5,-2,-1,0,0,0,1,1,1,1,1,1]); set(47,[1.5,2.2,3.1,2.5,1.8,1.4,1.2,1.1,1,0.9,0.8,0.8,0.7,0.7]); set(49,[360,320,280,300,340,360,380,390,400,410,420,430,440,450]); set(51,[72,68,64,66,70,72,74,75,76,76,78,78,80,80]); values[53]=['不変','増量','増量','不変','減量','減量','なし','なし','なし','なし','なし','なし','なし','なし']; set(54,[0.8,0.6,0.4,0.5,0.7,0.8,0.9,1,1,1.1,1.1,1.2,1.2,1.2]); set(55,[2,3.5,4,3,2,2,2,2,2,2,2,2,2,2]); values[56]=['無','無','有','無','無','無','無','無','無','無','無','無','無','無']; values[57]=['無','有','有','無','無','無','無','無','無','無','無','無','無','無']; set(12,[18,15,12,11,13,16,18,20,22,22,23,24,25,25]); set(13,[1,1.1,1.3,1.2,1.1,1,1,1,1,1,1,1,1,1]); set(14,[32,36,42,38,34,32,30,30,30,30,30,30,30,30]); set(15,[280,250,180,200,230,260,280,300,320,320,330,330,340,340]); set(16,[2,4,8,6,4,3,2.5,2,1.8,1.5,1.2,1,1,0.8]); set(21,[300,800,1200,900,600,400,300,250,220,200,180,160,140,130]); set(58,[50,48,46,46,47,48,49,50,50,51,52,52,53,54]); set(17,[3.4,3.2,2.8,2.9,3.1,3.3,3.4,3.5,3.6,3.6,3.7,3.8,3.8,3.9]); set(34,[4.2,4,3.4,3.6,3.8,4,4.1,4.2,4.2,4.3,4.3,4.4,4.4,4.4]); set(37,[3.2,2.8,2.5,2.7,3,3.1,3.2,3.3,3.4,3.4,3.5,3.5,3.5,3.6]); set(39,[2,1.9,1.7,1.8,1.9,2,2,2,2,2,2,2,2,2]); saveState(); recalc(); }
 function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
