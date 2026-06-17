@@ -462,7 +462,8 @@ function renderDaily() {
           wrap.appendChild(status);
           td.appendChild(wrap);
         } else {
-          input.addEventListener('input', e=>{ values[row.r][d]=e.target.value; saveState(); (row.r===SBP_ROW || row.r===DBP_ROW) ? recalc() : refreshCalculated(); });
+          input.addEventListener('input', e=>{ values[row.r][d]=e.target.value; saveState(); refreshCalculated(); });
+          input.addEventListener('blur', ()=>{ if (row.r===SBP_ROW || row.r===DBP_ROW) renderDaily(); });
           input.addEventListener('keydown', moveOnEnter);
           td.appendChild(input);
         }
