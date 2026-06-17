@@ -282,7 +282,7 @@ const OPTIONAL_MEASURE_ROWS = [47,41];
 const OPTIONAL_MEASURE_VALUES = ['測定なし','評価対象外'];
 const UNMEASURED_ROWS = [56,57];
 const UNMEASURED_VALUE = '未測定';
-const COPY_PREVIOUS_ROWS = [5,6];
+const COPY_PREVIOUS_ROWS = [5,6,58];
 let selectedDay = 0;
 let caseId = localStorage.getItem(CASE_ID_KEY) || '';
 let values = loadState(caseId);
@@ -442,7 +442,8 @@ function copyPreviousDayValue(row, day) {
   const input=document.querySelector(`#dailyTable .cell[data-r="${row}"][data-d="${day}"]`);
   if (input) input.value=previous;
   refreshCalculated();
-  flashStatus(`Day${day+1}に前日の${row===6?'身長':'体重'}をコピーしました`);
+  const itemName = row===6 ? '身長' : row===5 ? '体重' : 'MRCスコア';
+  flashStatus(`Day${day+1}に前日の${itemName}をコピーしました`);
 }
 
 function renderDaily() {
