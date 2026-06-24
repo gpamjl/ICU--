@@ -40,7 +40,7 @@ button.action.view-large.active, button.action.view-overview.active { outline:2p
 main { padding:18px; }
 .case-panel { background:#fff; border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin-bottom:14px; display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; }
 .case-panel label { display:flex; align-items:center; gap:8px; font-weight:700; color:#24364d; }
-.case-panel input { border:1px solid #b6c2d2; border-radius:7px; padding:9px 10px; min-width:220px; font:inherit; font-size:15px; font-weight:650; }
+.case-panel input, .case-panel select { border:1px solid #b6c2d2; border-radius:7px; padding:9px 10px; min-width:220px; font:inherit; font-size:15px; font-weight:650; background:#fff; }
 .case-note { color:#b45309; font-size:12px; font-weight:650; }
 .case-current { color:#0f766e; font-size:13px; font-weight:800; }
 .sheet { display:none; }
@@ -167,7 +167,7 @@ canvas { width:100%; height:310px; display:block; }
   main { padding:8px; }
   .case-panel { display:block; padding:10px; }
   .case-panel label { display:block; }
-  .case-panel input { width:100%; min-width:0; margin-top:6px; font-size:16px; }
+  .case-panel input, .case-panel select { width:100%; min-width:0; margin-top:6px; font-size:16px; }
   .case-panel button { width:100%; margin-top:8px; }
   .case-note { display:block; margin-top:6px; }
   .dashboard { grid-template-columns:1fr 1fr; }
@@ -249,6 +249,11 @@ canvas { width:100%; height:310px; display:block; }
     <label>症例ID <input id="caseIdInput" type="text" autocomplete="off" placeholder="例: Case-001"></label>
     <button class="action" id="caseOpenBtn">症例を開く/切替</button>
     <button class="action primary" id="caseSaveBtn">記録</button>
+    <label>保存済み症例
+      <select id="caseHistorySelect" aria-label="保存済み症例一覧">
+        <option value="">一覧から選択</option>
+      </select>
+    </label>
     <span class="case-current" id="caseCurrentLabel"></span>
     <span class="case-note">注意：カルテIDやイニシャルは記入しないでください。</span>
   </section>
@@ -268,6 +273,7 @@ formulaRows.add(REQUIRED_RATE_ROW);
 const graphMap = Object.fromEntries(Object.entries(DATA.graphMap).map(([k,v])=>[Number(k),Number(v)]));
 const STORAGE_KEY = 'icuAwDailyStateV3';
 const CASE_ID_KEY = 'icuAwCaseIdV1';
+const CASE_HISTORY_KEY = 'icuAwCaseIdHistoryV1';
 const CASE_MIGRATION_KEY = 'icuAwCaseStorageMigratedV1';
 const VIEW_MODE_KEY = 'icuAwViewModeV1';
 const REQUIRED_ROWS = [51,47,41,22,18,21,12,34,53,56,57,58];
@@ -291,6 +297,39 @@ let viewMode = localStorage.getItem(VIEW_MODE_KEY) || 'large';
 function blankGrid() { const g={}; for (const row of [...DATA.dailyRows, ...CUSTOM_DAILY_ROWS]) g[row.r]=Array(14).fill(''); return g; }
 function normalizeCaseId(value) { return String(value || '').trim(); }
 function caseStorageKey(id) { return `${STORAGE_KEY}:case:${encodeURIComponent(normalizeCaseId(id) || '__no_case__')}`; }
+function savedCaseIds() {
+  const ids=[];
+  try {
+    const stored=JSON.parse(localStorage.getItem(CASE_HISTORY_KEY) || '[]');
+    if (Array.isArray(stored)) ids.push(...stored);
+  } catch {}
+  const prefix=`${STORAGE_KEY}:case:`;
+  for (let i=0; i<localStorage.length; i++) {
+    const key=localStorage.key(i);
+    if (!key || !key.startsWith(prefix)) continue;
+    try {
+      const id=decodeURIComponent(key.slice(prefix.length));
+      if (id && id!=='__no_case__') ids.push(id);
+    } catch {}
+  }
+  if (caseId) ids.push(caseId);
+  return [...new Set(ids.map(normalizeCaseId).filter(Boolean))];
+}
+function rememberCaseId(id) {
+  const normalized=normalizeCaseId(id);
+  if (!normalized) return;
+  const ids=savedCaseIds().filter(item=>item!==normalized);
+  ids.unshift(normalized);
+  localStorage.setItem(CASE_HISTORY_KEY, JSON.stringify(ids));
+  refreshCaseHistory();
+}
+function refreshCaseHistory() {
+  const select=document.getElementById('caseHistorySelect');
+  if (!select) return;
+  const ids=savedCaseIds();
+  select.innerHTML='<option value="">一覧から選択</option>'+ids.map(id=>`<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`).join('');
+  select.value=ids.includes(caseId) ? caseId : '';
+}
 function loadState(id=caseId) {
   const key=caseStorageKey(id);
   try {
@@ -309,6 +348,7 @@ function loadState(id=caseId) {
 function saveState() {
   localStorage.setItem(caseStorageKey(caseId), JSON.stringify(values));
   localStorage.setItem(CASE_ID_KEY, caseId);
+  if (caseId) rememberCaseId(caseId);
 }
 function flashStatus(message, delay=1600) {
   const status=document.getElementById('status');
@@ -320,6 +360,7 @@ function flashStatus(message, delay=1600) {
 function setCurrentCaseLabel() {
   const label=document.getElementById('caseCurrentLabel');
   if (label) label.textContent=caseId ? `現在の症例ID：${caseId}` : '現在の症例ID：未設定';
+  refreshCaseHistory();
 }
 function switchCase() {
   const input=document.getElementById('caseIdInput');
@@ -329,6 +370,7 @@ function switchCase() {
   saveState();
   caseId=nextId;
   localStorage.setItem(CASE_ID_KEY, caseId);
+  rememberCaseId(caseId);
   values=loadState(caseId);
   setCurrentCaseLabel();
   recalc();
@@ -344,6 +386,7 @@ function confirmSaveCase() {
     localStorage.setItem(CASE_ID_KEY, caseId);
   }
   saveState();
+  rememberCaseId(caseId);
   input.value=caseId;
   setCurrentCaseLabel();
   alert(`症例ID「${caseId}」と入力データを、この端末のブラウザ内に保存しました。`);
@@ -866,11 +909,18 @@ function setupViewModeControls() {
 }
 function setupCaseIdInput() {
   const input=document.getElementById('caseIdInput');
+  const history=document.getElementById('caseHistorySelect');
   input.value=caseId;
   setCurrentCaseLabel();
   input.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); switchCase(); } });
   document.getElementById('caseOpenBtn').addEventListener('click',switchCase);
   document.getElementById('caseSaveBtn').addEventListener('click',confirmSaveCase);
+  history.addEventListener('change', e=>{
+    if (!e.target.value) return;
+    input.value=e.target.value;
+    switchCase();
+  });
+  refreshCaseHistory();
 }
 function sample() { const set=(r, arr)=>{ values[r]=arr.map(v=>String(v)); }; set(5,[60,60,60,60,60,60,60,60,60,60,60,60,60,60]); set(18,[18,20,22,24,24,23,22,20,19,18,17,17,16,16]); set(19,[0.8,0.82,0.85,0.9,0.88,0.86,0.84,0.82,0.8,0.8,0.78,0.77,0.76,0.75]); set(22,[160,170,190,180,165,150,145,150,155,160,150,145,140,138]); values[23]=['無','無','有','有','無','無','無','無','無','無','無','無','無','無']; set(24,[1,1.2,1.5,1.4,1,0.8,0.7,0.6,0.5,0.4,0.3,0.2,0.2,0.1]); set(29,[5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8,5.8]); set(31,[180,180,180,180,180,180,180,180,180,180,180,180,180,180]); set(38,[8,10,12,10,8,6,5,4,3,2,1.5,1.2,1,0.8]); set(41,[7.38,7.36,7.34,7.36,7.38,7.4,7.41,7.41,7.42,7.42,7.43,7.43,7.44,7.44]); set(45,[-1,-2,-3.5,-2,-1,0,0,0,1,1,1,1,1,1]); set(47,[1.5,2.2,3.1,2.5,1.8,1.4,1.2,1.1,1,0.9,0.8,0.8,0.7,0.7]); set(49,[360,320,280,300,340,360,380,390,400,410,420,430,440,450]); set(51,[72,68,64,66,70,72,74,75,76,76,78,78,80,80]); values[53]=['不変','増量','増量','不変','減量','減量','なし','なし','なし','なし','なし','なし','なし','なし']; set(54,[0.8,0.6,0.4,0.5,0.7,0.8,0.9,1,1,1.1,1.1,1.2,1.2,1.2]); set(55,[2,3.5,4,3,2,2,2,2,2,2,2,2,2,2]); values[56]=['無','無','有','無','無','無','無','無','無','無','無','無','無','無']; values[57]=['無','有','有','無','無','無','無','無','無','無','無','無','無','無']; set(12,[18,15,12,11,13,16,18,20,22,22,23,24,25,25]); set(13,[1,1.1,1.3,1.2,1.1,1,1,1,1,1,1,1,1,1]); set(14,[32,36,42,38,34,32,30,30,30,30,30,30,30,30]); set(15,[280,250,180,200,230,260,280,300,320,320,330,330,340,340]); set(16,[2,4,8,6,4,3,2.5,2,1.8,1.5,1.2,1,1,0.8]); set(21,[300,800,1200,900,600,400,300,250,220,200,180,160,140,130]); set(58,[50,48,46,46,47,48,49,50,50,51,52,52,53,54]); set(17,[3.4,3.2,2.8,2.9,3.1,3.3,3.4,3.5,3.6,3.6,3.7,3.8,3.8,3.9]); set(34,[4.2,4,3.4,3.6,3.8,4,4.1,4.2,4.2,4.3,4.3,4.4,4.4,4.4]); set(37,[3.2,2.8,2.5,2.7,3,3.1,3.2,3.3,3.4,3.4,3.5,3.5,3.5,3.6]); set(39,[2,1.9,1.7,1.8,1.9,2,2,2,2,2,2,2,2,2]); saveState(); recalc(); }
 function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
