@@ -43,6 +43,9 @@ main { padding:18px; }
 .case-panel input, .case-panel select { border:1px solid #b6c2d2; border-radius:7px; padding:9px 10px; min-width:220px; font:inherit; font-size:15px; font-weight:650; background:#fff; }
 .case-note { color:#b45309; font-size:12px; font-weight:650; }
 .case-current { color:#0f766e; font-size:13px; font-weight:800; }
+.case-history-label { background:#f0fdf4; border:1px solid #86efac; border-radius:7px; padding:5px 8px; }
+.case-history-label select { min-width:210px; border-color:#4ade80; }
+.case-history-count { color:#166534; font-size:12px; font-weight:800; white-space:nowrap; }
 .sheet { display:none; }
 .sheet.active { display:block; }
 .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; box-shadow:0 1px 4px rgba(15,23,42,.05); }
@@ -249,10 +252,11 @@ canvas { width:100%; height:310px; display:block; }
     <label>症例ID <input id="caseIdInput" type="text" autocomplete="off" placeholder="例: Case-001"></label>
     <button class="action" id="caseOpenBtn">症例を開く/切替</button>
     <button class="action primary" id="caseSaveBtn">記録</button>
-    <label>保存済み症例
+    <label class="case-history-label">保存済み症例から選択
       <select id="caseHistorySelect" aria-label="保存済み症例一覧">
         <option value="">一覧から選択</option>
       </select>
+      <span class="case-history-count" id="caseHistoryCount">0件</span>
     </label>
     <span class="case-current" id="caseCurrentLabel"></span>
     <span class="case-note">注意：カルテIDやイニシャルは記入しないでください。</span>
@@ -304,14 +308,18 @@ function savedCaseIds() {
     if (Array.isArray(stored)) ids.push(...stored);
   } catch {}
   const prefix=`${STORAGE_KEY}:case:`;
-  for (let i=0; i<localStorage.length; i++) {
-    const key=localStorage.key(i);
-    if (!key || !key.startsWith(prefix)) continue;
-    try {
-      const id=decodeURIComponent(key.slice(prefix.length));
-      if (id && id!=='__no_case__') ids.push(id);
-    } catch {}
-  }
+  try {
+    for (let i=0; i<localStorage.length; i++) {
+      const key=localStorage.key(i);
+      if (!key || !key.startsWith(prefix)) continue;
+      try {
+        const id=decodeURIComponent(key.slice(prefix.length));
+        if (id && id!=='__no_case__') ids.push(id);
+      } catch {}
+    }
+  } catch {}
+  const lastCaseId=normalizeCaseId(localStorage.getItem(CASE_ID_KEY));
+  if (lastCaseId) ids.push(lastCaseId);
   if (caseId) ids.push(caseId);
   return [...new Set(ids.map(normalizeCaseId).filter(Boolean))];
 }
@@ -327,8 +335,20 @@ function refreshCaseHistory() {
   const select=document.getElementById('caseHistorySelect');
   if (!select) return;
   const ids=savedCaseIds();
-  select.innerHTML='<option value="">一覧から選択</option>'+ids.map(id=>`<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`).join('');
+  select.replaceChildren();
+  const first=document.createElement('option');
+  first.value='';
+  first.textContent=ids.length ? '一覧から選択' : '保存済み症例はありません';
+  select.appendChild(first);
+  ids.forEach(id=>{
+    const option=document.createElement('option');
+    option.value=id;
+    option.textContent=id;
+    select.appendChild(option);
+  });
   select.value=ids.includes(caseId) ? caseId : '';
+  const count=document.getElementById('caseHistoryCount');
+  if (count) count.textContent=`${ids.length}件`;
 }
 function loadState(id=caseId) {
   const key=caseStorageKey(id);
@@ -911,6 +931,7 @@ function setupCaseIdInput() {
   const input=document.getElementById('caseIdInput');
   const history=document.getElementById('caseHistorySelect');
   input.value=caseId;
+  if (caseId) rememberCaseId(caseId);
   setCurrentCaseLabel();
   input.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); switchCase(); } });
   document.getElementById('caseOpenBtn').addEventListener('click',switchCase);
